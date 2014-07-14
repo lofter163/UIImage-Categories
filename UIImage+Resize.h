@@ -15,9 +15,10 @@
 - (UIImage *)resizedImageWithContentMode:(UIViewContentMode)contentMode
                                   bounds:(CGSize)bounds
                     interpolationQuality:(CGInterpolationQuality)quality;
-- (UIImage *)resizedImage:(CGSize)newSize
-                transform:(CGAffineTransform)transform
-           drawTransposed:(BOOL)transpose
-     interpolationQuality:(CGInterpolationQuality)quality;
-- (CGAffineTransform)transformForOrientation:(CGSize)newSize;
+- (UIImage *)imageRotatedByDegrees:(CGFloat)degrees;
+//x水平缩放比例，y垂直缩放比例
+- (UIImage *)imageRotatedByDegrees:(CGFloat)degrees scaleX:(float)x scaleY:(float)y;
+
+- (UIImage *)combineFrontImage:(UIImage *)frontImg point:(CGPoint)point;
+
 @end

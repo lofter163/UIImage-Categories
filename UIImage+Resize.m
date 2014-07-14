@@ -7,6 +7,15 @@
 #import "UIImage+RoundedCorner.h"
 #import "UIImage+Alpha.h"
 
+// Private helper methods
+@interface UIImage ()
+- (UIImage *)resizedImage:(CGSize)newSize
+                transform:(CGAffineTransform)transform
+           drawTransposed:(BOOL)transpose
+     interpolationQuality:(CGInterpolationQuality)quality;
+- (CGAffineTransform)transformForOrientation:(CGSize)newSize;
+@end
+
 @implementation UIImage (Resize)
 
 // Returns a copy of this image that is cropped to the given bounds.
@@ -39,7 +48,7 @@
     UIImage *croppedImage = [resizedImage croppedImage:cropRect];
     
     UIImage *transparentBorderImage = borderSize ? [croppedImage transparentBorderImage:borderSize] : croppedImage;
-    
+
     return [transparentBorderImage roundedCornerImage:cornerRadius borderSize:borderSize];
 }
 
@@ -47,33 +56,23 @@
 // The image will be scaled disproportionately if necessary to fit the bounds specified by the parameter
 - (UIImage *)resizedImage:(CGSize)newSize interpolationQuality:(CGInterpolationQuality)quality {
     BOOL drawTransposed;
-    CGAffineTransform transform = CGAffineTransformIdentity;
     
-    // In iOS 5 the image is already correctly rotated. See Eran Sandler's
-    // addition here: http://eran.sandler.co.il/2011/11/07/uiimage-in-ios-5-orientation-and-resize/
+    switch (self.imageOrientation) {
+        case UIImageOrientationLeft:
+        case UIImageOrientationLeftMirrored:
+        case UIImageOrientationRight:
+        case UIImageOrientationRightMirrored:
+            drawTransposed = YES;
+            break;
+            
+        default:
+            drawTransposed = NO;
+    }
     
-    if ( [[[UIDevice currentDevice] systemVersion] floatValue] >= 5.0 ) 
-    {
-        drawTransposed = NO;  
-    } 
-    else 
-    {    
-        switch ( self.imageOrientation ) 
-        {
-            case UIImageOrientationLeft:
-            case UIImageOrientationLeftMirrored:
-            case UIImageOrientationRight:
-            case UIImageOrientationRightMirrored:
-                drawTransposed = YES;
-                break;
-            default:
-                drawTransposed = NO;
-        }
-        
-        transform = [self transformForOrientation:newSize];
-    } 
-    
-    return [self resizedImage:newSize transform:transform drawTransposed:drawTransposed interpolationQuality:quality];
+    return [self resizedImage:newSize
+                    transform:[self transformForOrientation:newSize]
+               drawTransposed:drawTransposed
+         interpolationQuality:quality];
 }
 
 // Resizes the image according to the given content mode, taking into account the image's orientation
@@ -116,19 +115,15 @@
     CGRect transposedRect = CGRectMake(0, 0, newRect.size.height, newRect.size.width);
     CGImageRef imageRef = self.CGImage;
     
-    // Fix for a colorspace / transparency issue that affects some types of 
-    // images. See here: http://vocaro.com/trevor/blog/2009/10/12/resize-a-uiimage-the-right-way/comment-page-2/#comment-39951
-        
-	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGContextRef bitmap =CGBitmapContextCreate( NULL,
-                                               newRect.size.width,
-                                               newRect.size.height,
-                                               8,
-                                               0,
-                                               colorSpace,
-                                               kCGImageAlphaPremultipliedLast );
-    CGColorSpaceRelease(colorSpace);
-	
+    // Build a context that's the same dimensions as the new size
+    CGContextRef bitmap = CGBitmapContextCreate(NULL,
+                                                newRect.size.width,
+                                                newRect.size.height,
+                                                CGImageGetBitsPerComponent(imageRef),
+                                                0,
+                                                CGImageGetColorSpace(imageRef),
+                                                kCGImageAlphaNoneSkipLast);
+    
     // Rotate and/or flip the image if required by its orientation
     CGContextConcatCTM(bitmap, transform);
     
@@ -171,8 +166,7 @@
             transform = CGAffineTransformTranslate(transform, 0, newSize.height);
             transform = CGAffineTransformRotate(transform, -M_PI_2);
             break;
-        default:
-            break;
+        default:break;
     }
     
     switch (self.imageOrientation) {
@@ -187,11 +181,78 @@
             transform = CGAffineTransformTranslate(transform, newSize.height, 0);
             transform = CGAffineTransformScale(transform, -1, 1);
             break;
-        default:
-            break;
+        default:break;
     }
     
     return transform;
+}
+
+- (UIImage *)imageRotatedByDegrees:(CGFloat)degrees scaleX:(float)x scaleY:(float)y
+{
+    CGRect newRect           = CGRectMake(0, 0, self.size.width * x, self.size.height * y);
+    
+    // calculate the size of the rotated view's containing box for our drawing space
+    CGAffineTransform t      = CGAffineTransformMakeRotation(degrees);
+    CGSize rotatedSize       = CGRectApplyAffineTransform(newRect, t).size;
+    
+    // Create the bitmap context
+    UIGraphicsBeginImageContext(rotatedSize);
+    CGContextRef bitmap = UIGraphicsGetCurrentContext();
+    
+    // Move the origin to the middle of the image so we will rotate and scale around the center.
+    CGContextTranslateCTM(bitmap, rotatedSize.width/2, rotatedSize.height/2);
+    
+    // Rotate the image context
+    CGContextRotateCTM(bitmap, degrees);
+    
+    // Now, draw the rotated/scaled image into the context
+    CGContextScaleCTM(bitmap, 1.0, -1.0);
+    CGContextDrawImage(bitmap, CGRectMake(-newRect.size.width / 2, -newRect.size.height / 2, newRect.size.width, newRect.size.height), [self CGImage]);
+    
+    UIImage *newImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return newImage;
+}
+
+- (UIImage *)imageRotatedByDegrees:(CGFloat)degrees
+{
+    CGFloat angle = degrees * M_PI / 180;
+    CGRect newRect           = CGRectMake(0, 0, self.size.width, self.size.height);
+    
+    // calculate the size of the rotated view's containing box for our drawing space
+    CGAffineTransform t      = CGAffineTransformMakeRotation(angle);
+    CGSize rotatedSize       = CGRectApplyAffineTransform(newRect, t).size;
+    
+    // Create the bitmap context
+    UIGraphicsBeginImageContext(rotatedSize);
+    CGContextRef bitmap = UIGraphicsGetCurrentContext();
+    
+    // Move the origin to the middle of the image so we will rotate and scale around the center.
+    CGContextTranslateCTM(bitmap, rotatedSize.width/2, rotatedSize.height/2);
+    
+    // Rotate the image context
+    CGContextRotateCTM(bitmap, angle);
+    
+    // Now, draw the rotated/scaled image into the context
+    CGContextScaleCTM(bitmap, 1.0, -1.0);
+    CGContextDrawImage(bitmap, CGRectMake(-self.size.width / 2, -self.size.height / 2, self.size.width, self.size.height), [self CGImage]);
+    
+    UIImage *newImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return newImage;
+}
+
+- (UIImage *)combineFrontImage:(UIImage *)frontImg point:(CGPoint)point
+{
+    UIGraphicsBeginImageContext(self.size);
+    
+    [self drawAtPoint:CGPointZero];
+    [frontImg drawAtPoint:point];
+
+    UIImage *resultingImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    
+    return resultingImage;
 }
 
 @end
